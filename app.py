@@ -135,74 +135,77 @@ df_historico_filtrado = df_limpo[
 # Mostra a seção de análise dispersiva baseada nos escolhas de filtro feitas na esquerda
 st.subheader('Análises Visuais do Histórico Filtrado')
 
-# Condicional para verificar se o usuário removeu todas as opções de filtro da barra lateral
+# Condicional para verificar se o utilizador removeu todas as opções de filtro da barra lateral
 if len(vinculos_selecionados) == 0 or len(escolaridades_selecionadas) == 0:
-    # Mostra um alerta amigável de erro avisando que os filtros estão completamente vazios
     st.warning('Por favor, selecione pelo menos uma opção nos filtros da barra lateral esquerda para exibir os gráficos.')
-# Caso exista dados para plotar com base nos filtros selecionados
 else:
-    # Mapeia as cores para a situação real de inadimplência da planilha histórica
-    mapa_cores = {'Adimplente': 'blue', 'Inadimplente': 'red'}
+    # Cria uma cópia do histórico filtrado
+    df_historico_filtrado = df_historico_filtrado.copy()
+    
+    # Verifica se a coluna de alvo existe para mapear os rótulos de forma segura
+    if 'Inadimplente' in df_historico_filtrado.columns:
+        df_historico_filtrado['Situação'] = df_historico_filtrado['Inadimplente'].map({0: 'Adimplente', 1: 'Inadimplente'})
+        coluna_cor = 'Situação'
+    else:
+        coluna_cor = None
 
-    # Gera o gráfico de dispersão dinâmico relacionando a Renda Mensal com o Valor da Parcela
+    # Identifica os nomes corretos das colunas para os eixos (caso existam variações nos nomes)
+    col_x = 'Renda Mensal' if 'Renda Mensal' in df_historico_filtrado.columns else df_historico_filtrado.columns[0]
+    col_y = 'Valor da Parcela' if 'Valor da Parcela' in df_historico_filtrado.columns else df_historico_filtrado.columns[1]
+
+    # Gera o gráfico de dispersão dinâmico
     fig_scatter = px.scatter(
         df_historico_filtrado,
-        x='Renda Mensal',
-        y='Valor da Parcela',
-        color='Situação',
-        color_discrete_map=mapa_cores,
-        title='Renda Mensal vs Valor da Parcela',
-        labels={'Renda Mensal': 'Renda Mensal (R$)', 'Valor da Parcela': 'Valor da Parcela (R$)'}
+        x=col_x,
+        y=col_y,
+        color=coluna_cor,
+        color_discrete_map={'Adimplente': 'blue', 'Inadimplente': 'red'} if coluna_cor else None,
+        title=f'{col_x} vs {col_y}',
+        labels={col_x: f'{col_x} (R$)', col_y: f'{col_y} (R$)'}
     )
 
-    # Adiciona a marcação da estrela amarela que indica visualmente o cliente simulado pelos inputs
+    # Adiciona a marcação da estrela amarela que indica o cliente simulado
+    val_x = dados_usuario.get(col_x, df_limpo[col_x].mean() if col_x in df_limpo else 0)
+    val_y = dados_usuario.get(col_y, df_limpo[col_y].mean() if col_y in df_limpo else 0)
+
     fig_scatter.add_trace(go.Scatter(
-        x=[dados_usuario.get('Renda Mensal', df_limpo['Renda Mensal'].mean())],
-        y=[dados_usuario.get('Valor da Parcela', df_limpo['Valor da Parcela'].mean())],
+        x=[val_x],
+        y=[val_y],
         mode='markers',
         marker=dict(color='yellow', size=15, symbol='star', line=dict(color='black', width=1.5)),
         name='Cliente Simulado'
     ))
 
-    # Ajusta o posicionamento da legenda e margens para melhorar a estética do gráfico de dispersão
     fig_scatter.update_layout(legend_title_text='Legenda', margin=dict(l=20, r=20, t=50, b=20))
-    # Desenha o gráfico de dispersão com o destaque na página principal
     st.plotly_chart(fig_scatter, use_container_width=True)
 
-    # Calcula a coluna numérica de Inadimplência na tabela filtrada para agrupar
-    df_historico_filtrado_num = df_historico_filtrado.copy()
-    df_historico_filtrado_num['Inadimplente_Num'] = df_historico_filtrado_num['Situação'].map({'Adimplente': 0, 'Inadimplente': 1})
+    # Gráfico de barras por atrasos anteriores (se a coluna existir)
+    col_atrasos = 'Atrasos Anteriores' if 'Atrasos Anteriores' in df_historico_filtrado.columns else None
+    
+    if col_atrasos and 'Inadimplente' in df_historico_filtrado.columns:
+        df_atrasos = df_historico_filtrado.groupby(col_atrasos)['Inadimplente'].mean().reset_index()
+        df_atrasos['Taxa de Inadimplência (%)'] = df_atrasos['Inadimplente'] * 100.0
 
-    # Agrupa o histórico filtrado para calcular a média real de inadimplentes (taxa em %) por número de atrasos anteriores
-    df_atrasos = df_historico_filtrado_num.groupby('Atrasos Anteriores')['Inadimplente_Num'].mean().reset_index()
-    # Multiplica a proporção por 100 para converter o valor em percentual legível
-    df_atrasos['Taxa de Inadimplência (%)'] = df_atrasos['Inadimplente_Num'] * 100.0
+        atrasos_simulados = int(dados_usuario.get(col_atrasos, 0))
 
-    # Recupera o valor de atrasos anteriores configurado para o cliente atual no painel
-    atrasos_simulados = int(dados_usuario.get('Atrasos Anteriores', 0))
+        cores_barras = [
+            '#FF8C00' if row[col_atrasos] == atrasos_simulados else '#1F77B4'
+            for idx, row in df_atrasos.iterrows()
+        ]
 
-    # Cria uma lista de cores onde cada barra recebe azul escuro por padrão, exceto a faixa do simulado que recebe laranja
-    cores_barras = [
-        '#FF8C00' if row['Atrasos Anteriores'] == atrasos_simulados else '#1F77B4'
-        for idx, row in df_atrasos.iterrows()
-    ]
+        fig_barras = go.Figure(go.Bar(
+            x=df_atrasos[col_atrasos],
+            y=df_atrasos['Taxa de Inadimplência (%)'],
+            marker_color=cores_barras,
+            text=df_atrasos['Taxa de Inadimplência (%)'].round(1).astype(str) + '%',
+            textposition='auto'
+        ))
 
-    # Constrói o gráfico de barras representando a taxa percentual de inadimplência por Atrasos Anteriores
-    fig_barras = go.Figure(go.Bar(
-        x=df_atrasos['Atrasos Anteriores'],
-        y=df_atrasos['Taxa de Inadimplência (%)'],
-        marker_color=cores_barras,
-        text=df_atrasos['Taxa de Inadimplência (%)'].round(1).astype(str) + '%',
-        textposition='auto'
-    ))
-
-    # Configura e adiciona título, rótulos de eixos e ajusta visualmente o gráfico de barras
-    fig_barras.update_layout(
-        title='Taxa de Inadimplência Real por Faixa de Atrasos Anteriores',
-        xaxis_title='Quantidade de Atrasos Anteriores',
-        yaxis_title='Taxa de Inadimplência (%)',
-        xaxis=dict(type='category'),
-        margin=dict(l=20, r=20, t=50, b=20)
-    )
-    # Desenha o terceiro gráfico de barras interativo na interface
-    st.plotly_chart(fig_barras, use_container_width=True)
+        fig_barras.update_layout(
+            title='Taxa de Inadimplência Real por Faixa de Atrasos Anteriores',
+            xaxis_title='Quantidade de Atrasos Anteriores',
+            yaxis_title='Taxa de Inadimplência (%)',
+            xaxis=dict(type='category'),
+            margin=dict(l=20, r=20, t=50, b=20)
+        )
+        st.plotly_chart(fig_barras, use_container_width=True)
